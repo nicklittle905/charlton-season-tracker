@@ -1,0 +1,18 @@
+version: 2
+
+models:
+  - name: fct_team_match
+    columns:
+      - name: match_id
+        tests:
+          - not_null
+
+      - name: team_id
+        tests:
+          - not_null
+
+      - name: points
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1, 3]
