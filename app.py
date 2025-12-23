@@ -207,30 +207,34 @@ with col2:
     if not pos.empty:
         teams_in_league = len(league_table) if not league_table.empty else int(pos["position"].max())
         teams_in_league = max(teams_in_league, int(pos["position"].max()))
-        chart = (
-            alt.Chart(pos)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("matchday:Q", title="Matchday"),
-                y=alt.Y(
-                    "position:Q",
-                    title="Position",
-                    scale=alt.Scale(reverse=True, domain=[1, teams_in_league]),
-                    axis=alt.Axis(values=list(range(1, teams_in_league + 1))),
-                ),
-                tooltip=[
-                    alt.Tooltip("matchday:Q", title="Matchday"),
-                    alt.Tooltip("position:Q", title="Position"),
-                    alt.Tooltip("points:Q", title="Points"),
-                    alt.Tooltip("gd:Q", title="GD"),
-                    alt.Tooltip("opponent:N", title="Opponent"),
-                    alt.Tooltip("result:N", title="Result"),
-                    alt.Tooltip("goals_for:Q", title="Goals For"),
-                    alt.Tooltip("goals_against:Q", title="Goals Against"),
-                    alt.Tooltip("as_of_date:T", title="As of"),
-                ],
-            )
+        color_scale = alt.Scale(domain=["W", "D", "L"], range=["#22c55e", "#e2e8f0", "#ef4444"])
+
+        base = alt.Chart(pos).encode(
+            x=alt.X("matchday:Q", title="Matchday"),
+            y=alt.Y(
+                "position:Q",
+                title="Position",
+                scale=alt.Scale(reverse=True, domain=[1, teams_in_league]),
+                axis=alt.Axis(values=list(range(1, teams_in_league + 1))),
+            ),
+            tooltip=[
+                alt.Tooltip("matchday:Q", title="Matchday"),
+                alt.Tooltip("position:Q", title="Position"),
+                alt.Tooltip("points:Q", title="Points"),
+                alt.Tooltip("gd:Q", title="GD"),
+                alt.Tooltip("opponent:N", title="Opponent"),
+                alt.Tooltip("result:N", title="Result"),
+                alt.Tooltip("goals_for:Q", title="Goals For"),
+                alt.Tooltip("goals_against:Q", title="Goals Against"),
+                alt.Tooltip("as_of_date:T", title="As of"),
+            ],
         )
+
+        line = base.mark_line(color="#cbd5e1", strokeWidth=3)
+        points = base.mark_point(filled=True, size=140, strokeWidth=0).encode(
+            color=alt.Color("result:N", title="Result", scale=color_scale, legend=None)
+        )
+        chart = line + points
         st.altair_chart(chart, use_container_width=True)
         st.caption("Lower is better (1st at the top). Y-axis reversed.")
     else:
