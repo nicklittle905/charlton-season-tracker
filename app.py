@@ -5,6 +5,7 @@ import altair as alt
 import duckdb
 import pandas as pd
 import streamlit as st
+from datetime import datetime
 
 from pipeline.run_pipeline import run_refresh
 
@@ -20,6 +21,8 @@ session_defaults = {
     "refreshing": False,
     "refresh_result": None,
     "last_refreshed_team_id": None,
+    "last_refreshed_ts": None,
+    "last_refresh_duration": None,
 }
 for key, value in session_defaults.items():
     st.session_state.setdefault(key, value)
@@ -94,6 +97,7 @@ with controls_col:
     ):
         st.session_state["refreshing"] = True
         with st.spinner(f"Running ingest + dbt for team_id {selected_team_id}…"):
+            start_ts = datetime.utcnow()
             try:
                 result = run_refresh(int(selected_team_id))
             except Exception as exc:  # noqa: BLE001
@@ -103,9 +107,12 @@ with controls_col:
                     "ingest_stdout": str(exc),
                     "dbt_stdout": "",
                 }
+            duration = (datetime.utcnow() - start_ts).total_seconds()
             st.session_state["refresh_result"] = result
             if result.get("ingest_ok") and result.get("dbt_ok"):
                 st.session_state["last_refreshed_team_id"] = selected_team_id
+                st.session_state["last_refreshed_ts"] = datetime.utcnow()
+                st.session_state["last_refresh_duration"] = duration
                 st.success("Ingest + dbt completed.")
             else:
                 st.error("Refresh failed.")
@@ -116,6 +123,12 @@ with controls_col:
     data_team_id = st.session_state.get("last_refreshed_team_id")
     if data_team_id and data_team_id != selected_team_id:
         st.warning(f"Data currently reflects team_id {data_team_id}. Click Refresh to update selection.")
+
+    if st.session_state.get("last_refreshed_ts"):
+        ts = st.session_state["last_refreshed_ts"].strftime("%Y-%m-%d %H:%M:%S UTC")
+        dur = st.session_state.get("last_refresh_duration")
+        dur_str = f"{dur:.1f}s" if dur is not None else ""
+        st.caption(f"Last refresh: {ts} {f'({dur_str})' if dur_str else ''}")
 
 with status_col:
     st.subheader("Status")
@@ -157,7 +170,16 @@ with col1:
     if league_table.empty:
         st.info("League table not available yet. Run refresh.")
     else:
-        st.dataframe(league_table, use_container_width=True, hide_index=True)
+        def highlight_team(row: pd.Series) -> List[str]:
+            return [
+                "background-color: #e0f2ff; color: #0f172a"
+                if str(row.get("team_name")) == str(selected_team_name)
+                else ""
+                for _ in row
+            ]
+
+        styled_table = league_table.style.apply(highlight_team, axis=1)
+        st.dataframe(styled_table, use_container_width=True, hide_index=True)
 
 with col2:
     st.subheader(f"{selected_team_name} position through time")
