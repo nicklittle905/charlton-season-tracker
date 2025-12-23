@@ -50,9 +50,10 @@ def cache_key() -> int:
 def query_df(sql: str, params: Optional[List[Any]], cache_seed: Any) -> pd.DataFrame:
     if not DB_PATH.exists():
         return pd.DataFrame()
+    param_tuple = tuple(params) if params else tuple()
     try:
         with duckdb.connect(str(DB_PATH), read_only=True) as con:
-            return con.execute(sql, params or []).df()
+            return con.execute(sql, param_tuple).df()
     except duckdb.Error:
         return pd.DataFrame()
 
@@ -151,6 +152,7 @@ with st.sidebar:
                     st.session_state["last_refresh_duration"] = duration
                     invalidate_cache()
                     st.success("Pipeline completed.")
+                    st.rerun()
                 else:
                     st.error("Pipeline failed.")
                     with st.expander("See logs"):
@@ -171,7 +173,7 @@ pos_history = query_df(
     """
     select
       s.matchday,
-      s.as_of_date,
+      s.last_match_date as as_of_date,
       s.position,
       s.points,
       s.gd,
@@ -180,17 +182,22 @@ pos_history = query_df(
       tm.goals_against,
       opp.team_name as opponent,
       opp.team_crest_url as opponent_crest_url
-    from mart_team_position_through_time s
+    from fct_standings_matchday s
     left join fct_team_match tm
       on tm.matchday = s.matchday
-     and tm.team_id = ?
+     and tm.team_id = s.team_id
     left join stg_raw_teams opp
       on tm.opponent_team_id = opp.team_id
+    where s.team_id = ?
     order by s.matchday
     """,
     [int(selected_team_id)],
-    cache_key(),
+    (cache_key(), int(selected_team_id), "pos_history"),
 )
+
+if st.session_state.get("debug_mode"):
+    st.write("DEBUG pos_history rows", len(pos_history))
+    st.write(pos_history.head())
 team_matches = query_df(
     """
     select
@@ -288,10 +295,9 @@ with tab_overview:
         if team_matches.empty:
             render_empty("No matches yet for this team.")
         else:
-            recent = team_matches.head(5)
-            chips = []
             color_map = {"W": "#22c55e", "D": "#e2e8f0", "L": "#ef4444"}
-            for _, r in recent.iterrows():
+            tiles = []
+            for _, r in team_matches.iterrows():
                 res = str(r.get("result", ""))
                 bg = color_map.get(res, "#e2e8f0")
                 score = (
@@ -301,20 +307,27 @@ with tab_overview:
                 )
                 crest = r.get("opponent_crest_url")
                 crest_img = (
-                    f"<img src='{crest}' style='height:28px;width:28px;vertical-align:middle;border-radius:6px;' />"
+                    f"<img src='{crest}' style='height:22px;width:22px;vertical-align:middle;border-radius:6px;' />"
                     if crest
                     else ""
                 )
-                chips.append(
-                    f"<div style='display:inline-flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 12px;margin-right:6px;border-radius:12px;background:{bg};color:#0f172a;font-weight:700;min-width:60px;box-shadow:0 1px 2px rgba(0,0,0,0.08);'>"
+                date_str = ""
+                if pd.notna(r.match_date):
+                    date_str = pd.to_datetime(r.match_date).strftime("%d-%b-%y")
+                tiles.append(
+                    f"<div style='display:inline-flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 8px;border-radius:10px;background:{bg};color:#0f172a;font-weight:700;width:110px;box-shadow:0 1px 2px rgba(0,0,0,0.06);'>"
+                    f"<div style='font-size:0.8rem;color:#0f172a;margin-bottom:2px;'>{date_str}</div>"
                     f"<div style='display:flex;align-items:center;justify-content:space-between;width:100%;gap:6px;'>"
-                    f"<div style='flex:0 0 65%;display:flex;align-items:center;justify-content:center;'>{crest_img}</div>"
-                    f"<div style='flex:0 0 35%;text-align:center;font-weight:700;'>{res}</div>"
+                    f"<div style='flex:0 0 60%;display:flex;align-items:center;justify-content:center;'>{crest_img}</div>"
+                    f"<div style='flex:0 0 40%;text-align:center;font-weight:700;'>{res}</div>"
                     f"</div>"
-                    f"<div style='font-weight:600;color:#0f172a;margin-top:4px;text-align:center;'>{score}</div>"
+                    f"<div style='font-weight:600;color:#0f172a;margin-top:2px;text-align:center;'>{score}</div>"
                     f"</div>"
                 )
-            st.markdown("".join(chips), unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='display:grid;grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:6px;'>" + "".join(tiles) + "</div>",
+                unsafe_allow_html=True,
+            )
 
     with chart_col:
         st.markdown("#### Position through time")
