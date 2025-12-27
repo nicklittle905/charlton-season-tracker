@@ -1,17 +1,22 @@
 # Charlton Season Tracker
 
-A small pipeline for loading football-data.org fixtures/results into DuckDB, transforming them with dbt, and serving a Streamlit dashboard focused on Charlton Athletic.
+End-to-end pipeline for football-data.org → DuckDB → dbt → Streamlit. Ingests full competition data (teams/matches), builds standings/marts, and renders a FotMob-inspired dashboard with team selection, logos, and per-team views.
 
-## What’s inside
-- **Ingest** (`ingest/load_raw.py`): pulls teams and matches from football-data.org for a competition/season and stores them in `warehouse/charlton.duckdb` (`raw_teams`, `raw_matches`).
-- **dbt project** (`charlton_dbt/`): builds staging, fact, and mart models (league table, Charlton position through time, match list).
-- **Dashboard** (`app.py`): Streamlit UI that reads the marts (read-only DuckDB connection).
+## Features
+- Ingest teams/matches (with crest URLs) for a competition/season into DuckDB.
+- dbt transforms: standings per matchday, latest league table, per-team match facts.
+- Streamlit dashboard:
+  - Sidebar: competition/season, team selector (radio), refresh pipeline, debug toggle.
+  - Overview: KPIs, form tiles (all matches), position-through-time chart with promotion/playoff/relegation bands.
+  - Matches: searchable match list + match detail card.
+  - Table: full league table with form column and selected team highlight.
+  - About: data source/limitations.
 
 ## Prerequisites
 - Python 3.9+
-- A football-data.org API token
-- DuckDB CLI (optional, for ad-hoc inspection)
-- dbt-duckdb (for `dbt run`) and Streamlit/Pandas/Altair for the app
+- football-data.org API token
+- DuckDB (CLI optional)
+- dbt-duckdb, Streamlit, Pandas, Altair
 
 ## Setup
 ```bash
@@ -23,7 +28,7 @@ pip install streamlit pandas altair dbt-duckdb
 ```
 
 ## Configure environment
-Copy `.env.example` to `.env` and fill in your token:
+Copy `.env.example` to `.env` and set:
 ```
 FOOTBALL_DATA_TOKEN=your_token
 COMP_CODE=ELC
@@ -31,37 +36,44 @@ SEASON=2025
 TEAM_NAME=Charlton Athletic FC
 DUCKDB_PATH=warehouse/charlton.duckdb
 ```
-> The dbt project also pins `team_id: 348` in `charlton_dbt/dbt_project.yml`; keep DUCKDB_PATH consistent with that file.
 
 ## Ingest raw data
 From repo root:
 ```bash
-python -m ingest.load_raw            # or: python ingest/load_raw.py
-# optional: add --full-refresh to truncate raw tables before load
+python -m ingest.load_raw      # or: python ingest/load_raw.py
+# optional: --full-refresh to truncate raw tables before load
 ```
-This creates/updates `warehouse/charlton.duckdb` with raw tables and an `ingest_runs` log.
+This creates/updates `warehouse/charlton.duckdb` with `raw_teams`, `raw_matches`, and `ingest_runs`.
 
 ## Run dbt transforms
 From `charlton_dbt/`:
 ```bash
 dbt run
-dbt test            # optional
+dbt test    # optional
 ```
 Key models:
 - `fct_team_match`: one row per team per match (finished matches only)
 - `fct_standings_matchday`: cumulative standings per matchday with ranking
-- `mart_league_table_current`: latest matchday league table
-- `mart_team_position_through_time`: Charlton’s position per matchday
-- `mart_team_last_5`: all Charlton matches (most recent first)
+- `mart_league_table_current`: latest matchday league table (with crest)
+- `mart_team_position_through_time`: standings history for all teams
+- `mart_team_last_5`: per-team match list (all matches, newest first)
+
+## Run the pipeline end-to-end
+From repo root:
+```bash
+# Build marts for a specific team context (e.g., 348):
+python -m pipeline.run_pipeline --team-id 348
+```
+This runs ingest + dbt (passing team_id to any team-filtered marts).
 
 ## Launch the dashboard
 From repo root (after ingest + dbt):
 ```bash
 streamlit run app.py
 ```
-If the DB file is missing, the app will prompt you to run ingest first.
+Use the sidebar to pick a team and click “Refresh pipeline” as needed. If you toggle “Debug,” the app will print query diagnostics to help trace issues.
 
 ## Troubleshooting
 - **Missing/invalid DB file**: delete/move `warehouse/charlton.duckdb` and re-run ingest.
-- **No data for Charlton**: verify `team_id` (348) and `TEAM_NAME` in `.env` match the ingest data; rerun ingest + dbt.
-- **API issues/rate limits**: the ingest script will surface HTTP errors with response text; check your football-data.org plan/limits.
+- **Empty charts**: toggle “Debug” to inspect the data feeding the charts; ensure ingest + dbt ran after selecting your team (via the sidebar refresh).
+- **API issues/rate limits**: ingest surfaces HTTP errors; verify your football-data.org plan/limits.
