@@ -1,6 +1,7 @@
 from datetime import datetime
 import os
 from pathlib import Path
+import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 
 import altair as alt
@@ -97,6 +98,9 @@ def table_form_badges(results: List[str]) -> str:
         for r in results
     )
 
+# Preload league table for sidebar selection (reused later for main content).
+league_table = query_df("select * from mart_league_table_current order by position", None, cache_key())
+
 
 # -----------------------------------------------------------------------------
 # Sidebar
@@ -104,36 +108,74 @@ def table_form_badges(results: List[str]) -> str:
 with st.sidebar:
     st.markdown("### Season Tracker")
     st.caption(f"Competition: **{COMP_CODE}** · Season: **{SEASON}**")
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stSidebar"] button[data-testid="baseButton-secondary"] {
+            justify-content: flex-start;
+            text-align: left;
+            font-family: monospace;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
     teams = fetch_teams()
+    teams_lookup = {t["team_id"]: t for t in teams}
     selected_team_id = st.session_state["selected_team_id"]
     selected_team_name = st.session_state["selected_team_name"]
     selected_team_crest_url = st.session_state.get("selected_team_crest_url")
 
-    if teams:
-        options = teams
-        idx = None
-        if selected_team_id is not None:
-            try:
-                idx = next(i for i, t in enumerate(options) if t["team_id"] == selected_team_id)
-            except StopIteration:
-                idx = None
-        selected = st.selectbox(
-            "Team",
-            options=options,
-            index=idx,
-            format_func=lambda opt: opt["team_name"],
-            placeholder="Select a team",
-        )
-        if selected:
-            selected_team_id = selected["team_id"]
-            selected_team_name = selected["team_name"]
-            selected_team_crest_url = selected.get("team_crest_url")
-            st.session_state["selected_team_id"] = selected_team_id
-            st.session_state["selected_team_name"] = selected_team_name
-            st.session_state["selected_team_crest_url"] = selected_team_crest_url
+    st.markdown("#### League table")
+    if league_table.empty:
+        st.warning("League table not available yet.")
+        # Fallback to raw team list if present
+        if teams:
+            options = teams
+            idx = None
+            if selected_team_id is not None:
+                try:
+                    idx = next(i for i, t in enumerate(options) if t["team_id"] == selected_team_id)
+                except StopIteration:
+                    idx = None
+            selected = st.selectbox(
+                "Team",
+                options=options,
+                index=idx,
+                format_func=lambda opt: opt["team_name"],
+                placeholder="Select a team",
+            )
+            if selected:
+                selected_team_id = selected["team_id"]
+                selected_team_name = selected["team_name"]
+                selected_team_crest_url = selected.get("team_crest_url")
     else:
-        st.warning("No teams loaded yet.")
+        picker_df = league_table[["position", "team_name", "points", "team_id"]].copy()
+        picker_df.rename(columns={"position": "Position", "team_name": "Team", "points": "Points", "team_id": "Team ID"}, inplace=True)
+        st.markdown(
+            "<div style='font-size:0.8rem;color:#94a3b8;font-family:monospace;text-align:center;'>"
+            "POS | TEAM                     | PTS"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        for _, row in picker_df.iterrows():
+            pos = int(row["Position"])
+            team = textwrap.shorten(str(row["Team"]), width=24, placeholder="…")
+            pts = int(row["Points"]) if pd.notna(row["Points"]) else 0
+            tid = int(row["Team ID"])
+            pos_str = str(pos).ljust(3)
+            team_str = team.ljust(24)
+            pts_str = str(pts).ljust(3)
+            label = f"{pos_str}| {team_str}| {pts_str}"
+            if st.button(label, key=f"team_row_{tid}", use_container_width=True, type="secondary"):
+                selected_team_id = tid
+                selected_team_name = team
+                selected_team_crest_url = teams_lookup.get(selected_team_id, {}).get("team_crest_url")
+
+    st.session_state["selected_team_id"] = selected_team_id
+    st.session_state["selected_team_name"] = selected_team_name
+    st.session_state["selected_team_crest_url"] = selected_team_crest_url
 
     refresh_disabled = st.session_state["refreshing"] or selected_team_id is None
     col_btn, col_dbg = st.columns([3, 1])
@@ -202,7 +244,6 @@ if selected_team_id is None:
     st.info("Select a team to view the dashboard.")
     st.stop()
 
-league_table = query_df("select * from mart_league_table_current order by position", None, cache_key())
 pos_history = query_df(
     """
     select
