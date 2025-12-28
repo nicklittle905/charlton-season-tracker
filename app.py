@@ -10,7 +10,7 @@ import streamlit as st
 
 from pipeline.run_pipeline import run_refresh
 
-DB_PATH = Path(__file__).resolve().parent / "warehouse/charlton.duckdb"
+DB_PATH = Path(__file__).resolve().parent / "warehouse/season_tracker.duckdb"
 DEFAULT_TEAM_ID = 348
 DEFAULT_TEAM_NAME = "Charlton Athletic FC"
 COMP_CODE = os.getenv("COMP_CODE", "ELC")
