@@ -11,8 +11,6 @@ import streamlit as st
 from pipeline.run_pipeline import run_refresh
 
 DB_PATH = Path(__file__).resolve().parent / "warehouse/season_tracker.duckdb"
-DEFAULT_TEAM_ID = 348
-DEFAULT_TEAM_NAME = "Charlton Athletic FC"
 COMP_CODE = os.getenv("COMP_CODE", "ELC")
 SEASON = os.getenv("SEASON", "2025")
 
@@ -22,8 +20,8 @@ st.set_page_config(page_title="Season Tracker", layout="wide")
 # Session + caching helpers
 # -----------------------------------------------------------------------------
 session_defaults = {
-    "selected_team_id": DEFAULT_TEAM_ID,
-    "selected_team_name": DEFAULT_TEAM_NAME,
+    "selected_team_id": None,
+    "selected_team_name": None,
     "selected_team_crest_url": None,
     "refreshing": False,
     "refresh_result": None,
@@ -114,28 +112,33 @@ with st.sidebar:
 
     if teams:
         options = teams
-        try:
-            idx = next(i for i, t in enumerate(options) if t["team_id"] == selected_team_id)
-        except StopIteration:
-            idx = 0
+        idx = None
+        if selected_team_id is not None:
+            try:
+                idx = next(i for i, t in enumerate(options) if t["team_id"] == selected_team_id)
+            except StopIteration:
+                idx = None
         selected = st.selectbox(
             "Team",
             options=options,
             index=idx,
             format_func=lambda opt: opt["team_name"],
+            placeholder="Select a team",
         )
-        selected_team_id = selected["team_id"]
-        selected_team_name = selected["team_name"]
-        selected_team_crest_url = selected.get("team_crest_url")
-        st.session_state["selected_team_id"] = selected_team_id
-        st.session_state["selected_team_name"] = selected_team_name
-        st.session_state["selected_team_crest_url"] = selected_team_crest_url
+        if selected:
+            selected_team_id = selected["team_id"]
+            selected_team_name = selected["team_name"]
+            selected_team_crest_url = selected.get("team_crest_url")
+            st.session_state["selected_team_id"] = selected_team_id
+            st.session_state["selected_team_name"] = selected_team_name
+            st.session_state["selected_team_crest_url"] = selected_team_crest_url
     else:
         st.warning("No teams loaded yet.")
 
+    refresh_disabled = st.session_state["refreshing"] or selected_team_id is None
     col_btn, col_dbg = st.columns([3, 1])
     with col_btn:
-        if st.button("Refresh pipeline", type="primary", disabled=st.session_state["refreshing"]):
+        if st.button("Refresh pipeline", type="primary", disabled=refresh_disabled):
             st.session_state["refreshing"] = True
             with st.spinner(f"Running ingest + dbt for team_id {selected_team_id}…"):
                 start = datetime.utcnow()
@@ -165,9 +168,40 @@ with st.sidebar:
         dur = st.session_state.get("last_refresh_duration")
         st.caption(f"Last refresh: {ts} ({dur:.1f}s)")
 
+# Early exit if no team selected yet
+if selected_team_id is None:
+    st.info("Select a team to view the dashboard.")
+    st.stop()
+
+# -----------------------------------------------------------------------------
+# Header
+# -----------------------------------------------------------------------------
+header_col1, header_col2 = st.columns([5, 1])
+with header_col1:
+    crest_html = f'<img src="{selected_team_crest_url}" width="72" style="display:block;" />' if selected_team_crest_url else ""
+    team_label = selected_team_name or "Select a team"
+    st.markdown(
+        f"""
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div>{crest_html}</div>
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            <div style="color:#94a3b8;font-size:0.9rem;">{COMP_CODE} · {SEASON}</div>
+            <div style="font-size:2rem;font-weight:800;line-height:1.1;">{team_label}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+with header_col2:
+    st.caption(f"Team ID: {selected_team_id if selected_team_id is not None else '—'}")
+
 # -----------------------------------------------------------------------------
 # Data pulls
 # -----------------------------------------------------------------------------
+if selected_team_id is None:
+    st.info("Select a team to view the dashboard.")
+    st.stop()
+
 league_table = query_df("select * from mart_league_table_current order by position", None, cache_key())
 pos_history = query_df(
     """
@@ -221,29 +255,12 @@ team_matches = query_df(
     cache_key(),
 )
 
-# -----------------------------------------------------------------------------
-# Header
-# -----------------------------------------------------------------------------
-header_col1, header_col2 = st.columns([5, 1])
-with header_col1:
-    crest_html = f'<img src="{selected_team_crest_url}" width="72" style="display:block;" />' if selected_team_crest_url else ""
-    st.markdown(
-        f"""
-        <div style="display:flex;align-items:center;gap:12px;">
-          <div>{crest_html}</div>
-          <div style="display:flex;flex-direction:column;gap:2px;">
-            <div style="color:#94a3b8;font-size:0.9rem;">{COMP_CODE} · {SEASON}</div>
-            <div style="font-size:2rem;font-weight:800;line-height:1.1;">{selected_team_name}</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with header_col2:
-    st.caption(f"Team ID: {selected_team_id}")
-
 # Attempt to backfill crest from league table if missing
-if not league_table.empty and not st.session_state.get("selected_team_crest_url"):
+if (
+    selected_team_id is not None
+    and not league_table.empty
+    and not st.session_state.get("selected_team_crest_url")
+):
     row = league_table[league_table["team_id"] == selected_team_id].head(1)
     if not row.empty:
         st.session_state["selected_team_crest_url"] = row.iloc[0].get("team_crest_url")
